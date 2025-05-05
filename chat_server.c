@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 #include "sockettome.h"
 #include "dllist.h"
 
@@ -10,9 +11,50 @@ typedef struct room {
     Dllist players;
 }Room;
 
+typedef struct player{
+    int fd;
+    char *name;
+    FILE *stream;
+    Room *room;
+}Player;
+
 typedef struct server{
     Dllist rooms;
 }Server;
+
+typedef struct mainThread{
+    int fd;
+    Server *server;
+}MainThread;
+
+void *addPlayer(void *arg){
+    MainThread *thread = (MainThread *)arg;
+
+    FILE *reader = fdopen(thread->fd, "r");
+    FILE *writer = fdopen(dup(thread->fd), "w");
+
+    fprintf(writer, "Chat Rooms:\n\n\n");
+
+    Dllist roomPtr;
+    dll_traverse(roomPtr, thread->server->rooms){
+        Room *room = (Room *)jval_v(roomPtr->val);
+        fprintf(writer, "%s:", room->name);
+        Dllist playerPtr;
+        int i = 0;
+        dll_traverse(playerPtr, room->players) {
+            Player *player = (Player *)jval_v(playerPtr->val);
+            if(i > 0) fprintf(writer, ", ");
+            fprintf(writer, "%s", player->name);
+            i++;
+        }
+        fprintf(writer, "\n\n");
+    }
+
+    fprintf(writer, "Enter your chat name (no spaces):\n");
+    
+    fflush(writer);
+    free(arg);
+}
 
 int main(int argc, char const *argv[])
 {
@@ -43,17 +85,24 @@ int main(int argc, char const *argv[])
         exit(1);
     }
 
-    int fd = accept_connection(sock);
-    if (fd < 0) {
-        perror("accept_connection failed");
-        exit(1);
+    while(1){
+        int fd = accept_connection(sock);
+        if (fd < 0) {
+            perror("accept_connection failed");
+            exit(1);
+        }
+    
+        int *fdptr = malloc(sizeof(int));
+        *fdptr = fd;
+
+        MainThread *thread = malloc(sizeof(MainThread));
+        thread->fd = fd;
+        thread->server = server;
+
+        pthread_t tid;
+        pthread_create(&tid, NULL, addPlayer, thread);
+        pthread_detach(tid);
     }
 
-    char *un = getenv("USER");
-    printf("Connection established. Sending 'Server: %s'\n", un);
     
-
-
-    
-    return 0;
 }
