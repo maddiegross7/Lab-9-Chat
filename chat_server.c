@@ -5,6 +5,8 @@
 #include <pthread.h>
 #include "sockettome.h"
 #include "dllist.h"
+#include "jval.h"
+#include "jrb.h"
 
 typedef struct room {
     char *name;
@@ -19,7 +21,7 @@ typedef struct player{
 }Player;
 
 typedef struct server{
-    Dllist rooms;
+    JRB rooms;
 }Server;
 
 typedef struct mainThread{
@@ -35,8 +37,8 @@ void *addPlayer(void *arg){
 
     fprintf(writer, "Chat Rooms:\n\n\n");
 
-    Dllist roomPtr;
-    dll_traverse(roomPtr, thread->server->rooms){
+    JRB roomPtr;
+    jrb_traverse(roomPtr, thread->server->rooms){
         Room *room = (Room *)jval_v(roomPtr->val);
         fprintf(writer, "%s:", room->name);
         Dllist playerPtr;
@@ -51,7 +53,55 @@ void *addPlayer(void *arg){
     }
 
     fprintf(writer, "Enter your chat name (no spaces):\n");
+    if (fflush(writer) == EOF) {
+        perror("fflush failed");
+    }
+
+    char *name = malloc(256);
+    if (fgets(name, sizeof(name), reader) == NULL) {
+        if (feof(reader)) {
+            fprintf(stderr, "Connection closed by client\n");
+        } else {
+            perror("fgets failed");
+        }
+    }
+    name[strcspn(name, "\n")] = 0;
     
+    fprintf(writer, "Enter chat room:\n");
+    if (fflush(writer) == EOF) {
+        perror("fflush failed");
+    }
+
+    char *roomName = malloc(512);
+    if (fgets(roomName, sizeof(roomName), reader) == NULL) {
+        if (feof(reader)) {
+            fprintf(stderr, "Connection closed by client\n");
+        } else {
+            perror("fgets failed");
+        }
+    }
+    roomName[strcspn(roomName, "\n")] = 0;
+
+    JRB thisRoom = jrb_find_str(roomName, thread->server->rooms);
+    if(thisRoom == NULL){
+        fprintf(writer, "Room %s not found\n", roomName);
+        fflush(writer);
+        free(name);
+        free(roomName);
+        fclose(reader);
+        fclose(writer);
+        close(thread->fd);
+        free(arg);
+        return NULL;
+    }
+
+    Player *player = malloc(sizeof(Player));
+    player->fd = thread->fd;
+    player->name = strdup(name);
+    player->room = (Room *) jval_v(thisRoom->val);
+    
+    dll_append(player->room->players, new_jval_v(player));
+
     fflush(writer);
     free(arg);
 }
@@ -70,13 +120,13 @@ int main(int argc, char const *argv[])
     }
 
     Server *server = malloc(sizeof(Server));
-    server->rooms = new_dllist();
+    server->rooms = make_jrb();
 
     for(int i = 2; i < argc; i++){
         Room *room = malloc(sizeof(Room));
         room->name = strdup(argv[i]);
         room->players = new_dllist();
-        dll_append(server->rooms, new_jval_v(room));
+        jrb_insert_str(server->rooms, room->name, new_jval_v(room));
     }
 
     int sock = serve_socket(port);
