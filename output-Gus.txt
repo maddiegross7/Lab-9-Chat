@@ -131,23 +131,23 @@ Enter your chat name (no spaces):
 Enter chat room:
 Gus has joined
 Tinky-Winky: Super mean
-Posh-Spice: Now it's like top gun in the Old West, everybody wants me to draw
-Sasha: Man alone; born of stone;
 Gus: We found your weakness
-Tinky-Winky: For The Man
-Tinky-Winky: So hold tight baby 'cause don't you know daddy's comin'
+Sasha: Man alone; born of stone;
+Posh-Spice: Now it's like top gun in the Old West, everybody wants me to draw
 Posh-Spice: You know me
+Tinky-Winky: For The Man
 Sasha: My machine she's a dud, I'm stuck in the mud somewhere in the swamps of Jersey
+Tinky-Winky: So hold tight baby 'cause don't you know daddy's comin'
 Sasha: My tires were slashed and I almost crashed but the Lord had mercy
 Sasha: By the time we meet the morning light I will hold you in my arms
-Sasha: The wrecking ball is rushing
 Posh-Spice: Our young men have not died in vain,
+Sasha: The wrecking ball is rushing
 Tinky-Winky has left
 Gus: Every sign
 Posh-Spice: Here I stand
 Sasha has left
-Posh-Spice: There's a little cafe where they play guitars all night and day
 Gus: Bad machine
+Posh-Spice: There's a little cafe where they play guitars all night and day
 Posh-Spice has left
 Gus: How I swing
 Gus: Mass graves for the pump and the price is set

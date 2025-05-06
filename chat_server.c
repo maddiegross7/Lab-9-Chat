@@ -8,8 +8,6 @@
 #include "jval.h"
 #include "jrb.h"
 
-// ... (header includes remain unchanged)
-
 typedef struct room {
     char *name;
     Dllist players;
@@ -30,14 +28,17 @@ typedef struct server {
     JRB rooms;
 } Server;
 
+//I dont think this is really necessary but it works with it so I guess it is staying
 typedef struct mainThread {
     int fd;
     Server *server;
 } MainThread;
 
+//This is the function to add a new player to the server
 void *addPlayer(void *arg) {
     MainThread *thread = (MainThread *)arg;
 
+    //open the file descriptors for reading and writing
     FILE *reader = fdopen(thread->fd, "r");
     if(reader == NULL){
         perror("fdopen failed");
@@ -54,17 +55,9 @@ void *addPlayer(void *arg) {
         return NULL;
     }
 
-    // if (!reader || !writer) {
-    //     perror("fdopen failed");
-    //     if (reader) fclose(reader);
-    //     if (writer) fclose(writer);
-    //     close(thread->fd);
-    //     free(thread);
-    //     return NULL;
-    // }
-
     fputs("Chat Rooms:\n\n", writer);
 
+    //print out all of the rooms on the server
     JRB roomPtr;
     jrb_traverse(roomPtr, thread->server->rooms) {
         Room *room = (Room *)jval_v(roomPtr->val);
@@ -86,10 +79,11 @@ void *addPlayer(void *arg) {
     }
     fputs("\n", writer);
     fflush(writer);
+    //ask user for name
     fputs("Enter your chat name (no spaces):\n", writer);
     fflush(writer);
 
-    printf("hello\n");
+    //fgetting the name of the user
     char name[4096];
     if (fgets(name, sizeof(name), reader) == NULL) {
         fprintf(stderr, "Client disconnected or name read error\n");
@@ -99,14 +93,12 @@ void *addPlayer(void *arg) {
         free(thread);
         return NULL;
     }
-    //fflush(reader);
-    name[strcspn(name, "\n")] = '\0';
-    //fflush(writer);
-    printf("testing testing\n");
+    name[strcspn(name, "\n")] = '\0';//gets rid of the newline character
+    //ask for which room thay would like to join
     fputs("Enter chat room:\n", writer);
     fflush(writer);
 
-    printf("after asking for room\n");
+    //fget the room name and do error checking 
     char roomName[1024];
     if (fgets(roomName, sizeof(roomName), reader) == NULL) {
         fprintf(stderr, "Client disconnected or room read error\n");
@@ -117,7 +109,6 @@ void *addPlayer(void *arg) {
         return NULL;
     }
     roomName[strcspn(roomName, "\n")] = '\0';
-    printf("we have the room name\n");
     if (roomName[0] == '\0') {
         fputs("Room name cannot be empty!\n", writer);
         fflush(writer);
@@ -128,7 +119,7 @@ void *addPlayer(void *arg) {
         return NULL;
     }
 
-    printf("finding the room\n");
+    //find it in the jrb tree
     JRB thisRoom = jrb_find_str(thread->server->rooms, roomName);
     if (thisRoom == NULL) {
         fputs("Room ", writer);
@@ -142,7 +133,7 @@ void *addPlayer(void *arg) {
         return NULL;
     }
 
-    printf("making the player\n");
+    //create the player struct and assign its values and stuff
     Player *player = malloc(sizeof(Player));
     if (!player) {
         perror("malloc failed for player");
@@ -155,7 +146,7 @@ void *addPlayer(void *arg) {
 
     player->fd = thread->fd;
     player->name = strdup(name);
-    if (!player->name) {
+    if (!player->name) {//doing a bunch of error checking because what is wrong
         perror("strdup failed for name");
         free(player);
         fclose(reader);
@@ -164,27 +155,22 @@ void *addPlayer(void *arg) {
         free(thread);
         return NULL;
     }
-
     player->room = (Room *)jval_v(thisRoom->val);
     player->reader = reader;
     player->writer = writer;
 
+    //locking the threads so that we can add the player
     pthread_mutex_lock(&player->room->lock);
     dll_append(player->room->players, new_jval_v(player));
-    printf("we be locked\n");
     char *welcomeMessage = malloc(strlen(player->name) + 20);
     snprintf(welcomeMessage, strlen(player->name) + 20, "%s has joined\n", player->name);
     dll_append(player->room->messages, new_jval_s(welcomeMessage));
     pthread_cond_signal(&player->room->condition);
     pthread_mutex_unlock(&player->room->lock);
 
-    printf("we be unlocked\n");
+    //fgetting the messages that are sent by the user
     char buffer[2048];
-
-    printf("waiting for messages\n");
     while (fgets(buffer, sizeof(buffer), reader) != NULL) {
-        printf("Are we stuck here?\n");
-        //fflush(reader);
         buffer[strcspn(buffer, "\n")] = '\0';
 
         size_t total_len = strlen(player->name) + 2 + strlen(buffer) + 2;
@@ -202,7 +188,7 @@ void *addPlayer(void *arg) {
         pthread_mutex_unlock(&player->room->lock);
     }
 
-    printf("locking again after this\n");
+    //if the user leaves you need to handle accordingly
     pthread_mutex_lock(&player->room->lock);
     Dllist ptr;
     dll_traverse(ptr, player->room->players) {
@@ -211,13 +197,14 @@ void *addPlayer(void *arg) {
             break;
         }
     }
+    //and then you need this stupid ass exist message because shit is stupid and dumb and awful
     char *leaveMessage = malloc(strlen(player->name) + 20);
     snprintf(leaveMessage, strlen(player->name) + 20, "%s has left\n", player->name);
     dll_append(player->room->messages, new_jval_s(leaveMessage));
     pthread_cond_signal(&player->room->condition);
     pthread_mutex_unlock(&player->room->lock);
 
-    printf("we be unlocked again\n");
+    //close all the stuff and free and shit
     fclose(reader);
     fclose(writer);
     close(thread->fd);
@@ -230,13 +217,14 @@ void *addPlayer(void *arg) {
 
 void *initializeRoomThread(void *arg) {
     Room *room = (Room *)arg;
-
     while (1) {
+        //wait for message
         pthread_mutex_lock(&room->lock);
         while (dll_empty(room->messages)) {
             pthread_cond_wait(&room->condition, &room->lock);
         }
         pthread_mutex_unlock(&room->lock);
+        //send the messages
         while (!dll_empty(room->messages)) {
             pthread_mutex_lock(&room->lock);
             Dllist messageNode = dll_first(room->messages);
@@ -275,6 +263,7 @@ int main(int argc, char const *argv[]) {
     Server *server = malloc(sizeof(Server));
     server->rooms = make_jrb();
 
+    //making all of the rooms
     for (int i = 2; i < argc; i++) {
         Room *room = malloc(sizeof(Room));
         room->name = strdup(argv[i]);
@@ -295,6 +284,7 @@ int main(int argc, char const *argv[]) {
         exit(1);
     }
 
+    //accept connections and create player threads
     while (1) {
         int fd = accept_connection(sock);
         if (fd < 0) {
