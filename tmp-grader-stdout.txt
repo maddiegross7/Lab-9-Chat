@@ -1,7 +1,3 @@
-Error from talk process Fiona:  Expecting the following line:
-
-American-Idol:
-
-But got:
-
-
+Event in Chat Room Art: Fiona has joined
+Read Event From Client Fiona: Fiona has joined
+Error from talk process Fiona: Premature EOF

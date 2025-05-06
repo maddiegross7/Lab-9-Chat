@@ -39,8 +39,16 @@ void *addPlayer(void *arg) {
 
     FILE *reader = fdopen(thread->fd, "r");
     FILE *writer = fdopen(dup(thread->fd), "w");
+    if (!reader || !writer) {
+        perror("fdopen failed");
+        if (reader) fclose(reader);
+        if (writer) fclose(writer);
+        close(thread->fd);
+        free(thread);
+        return NULL;
+    }
 
-    fprintf(writer, "Chat Rooms:\n\n\n");
+    fprintf(writer, "Chat Rooms:\n\n");
 
     JRB roomPtr;
     jrb_traverse(roomPtr, thread->server->rooms) {
@@ -54,44 +62,41 @@ void *addPlayer(void *arg) {
             fprintf(writer, "%s", player->name);
             i++;
         }
-        fprintf(writer, "\n\n");
+        fprintf(writer, "\n");
     }
 
+    fprintf(writer, "\n");
     fprintf(writer, "Enter your chat name (no spaces):\n");
     fflush(writer);
 
     char name[4096];
-    if (fgets(name, sizeof(name), reader) == NULL) {
-        if (feof(reader)) {
-            fprintf(stderr, "Connection closed by client\n");
-        } else {
-            perror("fgets failed");
-        }
+    if (!fgets(name, sizeof(name), reader)) {
+        fprintf(stderr, "Client disconnected or name read error\n");
         fclose(reader);
         fclose(writer);
         close(thread->fd);
-        free(arg);
+        free(thread);
         return NULL;
     }
-    name[strcspn(name, "\n")] = 0;
+    fflush(reader);
+    name[strcspn(name, "\n")] = '\0';
+    fflush(writer);
 
     fprintf(writer, "Enter chat room:\n");
     fflush(writer);
 
     char roomName[1024];
-    if (fgets(roomName, sizeof(roomName), reader) == NULL) {
-        if (feof(reader)) {
-            fprintf(stderr, "Connection closed by client\n");
-        } else {
-            perror("fgets failed");
-        }
+    if (fgets(roomName, sizeof(roomName), reader)== NULL) {
+        fprintf(stderr, "Client disconnected or room read error\n");
         fclose(reader);
         fclose(writer);
         close(thread->fd);
-        free(arg);
+        free(thread);
         return NULL;
     }
-    roomName[strcspn(roomName, "\n")] = 0;
+    //fflush(reader);
+    roomName[strcspn(roomName, "\n")] = '\0';
+    //fflush(writer);
 
     if (roomName[0] == '\0') {
         fprintf(writer, "Room name cannot be empty!\n");
@@ -99,18 +104,18 @@ void *addPlayer(void *arg) {
         fclose(reader);
         fclose(writer);
         close(thread->fd);
-        free(arg);
+        free(thread);
         return NULL;
     }
 
     JRB thisRoom = jrb_find_str(thread->server->rooms, roomName);
-    if (thisRoom == NULL) {
+    if (!thisRoom) {
         fprintf(writer, "Room %s not found\n", roomName);
         fflush(writer);
         fclose(reader);
         fclose(writer);
         close(thread->fd);
-        free(arg);
+        free(thread);
         return NULL;
     }
 
@@ -120,18 +125,37 @@ void *addPlayer(void *arg) {
         fclose(reader);
         fclose(writer);
         close(thread->fd);
-        free(arg);
+        free(thread);
         return NULL;
     }
 
     player->fd = thread->fd;
     player->name = strdup(name);
+    if (!player->name) {
+        perror("strdup failed for name");
+        free(player);
+        fclose(reader);
+        fclose(writer);
+        close(thread->fd);
+        free(thread);
+        return NULL;
+    }
+
     player->room = (Room *)jval_v(thisRoom->val);
     player->reader = reader;
     player->writer = writer;
     pthread_mutex_init(&player->writers_block, NULL);
 
+    pthread_mutex_lock(&player->room->lock);
     dll_append(player->room->players, new_jval_v(player));
+
+    // // ===> Add join message
+    // //char join_msg[1024];
+    // //snprintf(join_msg, sizeof(join_msg), "%s has joined the room.\n", player->name);
+    // //dll_append(player->room->messages, new_jval_s(strdup(join_msg)));
+    pthread_cond_signal(&player->room->condition);
+
+    pthread_mutex_unlock(&player->room->lock);
 
     char *buffer = malloc(2048);
     if (!buffer) {
@@ -141,24 +165,23 @@ void *addPlayer(void *arg) {
         fclose(reader);
         fclose(writer);
         close(thread->fd);
-        free(arg);
+        free(thread);
         return NULL;
     }
 
-    while (fgets(buffer, 2047, reader) != NULL) {
+    while (fgets(buffer, 2047, reader)) {
+        printf("Are we stuck here?\n");
+        fflush(reader);
         buffer[strcspn(buffer, "\n")] = '\0';
 
-        size_t name_len = strlen(player->name);
-        size_t buffer_len = strlen(buffer);
-        size_t total_len = name_len + 2 + buffer_len + 1;
-
+        size_t total_len = strlen(player->name) + 2 + strlen(buffer) + 2;
         char *message = malloc(total_len);
         if (!message) {
             perror("malloc failed for message");
             continue;
         }
 
-        snprintf(message, total_len, "%s: %s", player->name, buffer);
+        snprintf(message, total_len, "%s: %s\n", player->name, buffer);
 
         pthread_mutex_lock(&player->room->lock);
         dll_append(player->room->messages, new_jval_s(message));
@@ -166,6 +189,8 @@ void *addPlayer(void *arg) {
         pthread_mutex_unlock(&player->room->lock);
     }
 
+    // ===> Begin cleanup
+    pthread_mutex_lock(&player->room->lock);
     Dllist ptr;
     dll_traverse(ptr, player->room->players) {
         if (jval_v(ptr->val) == player) {
@@ -174,8 +199,13 @@ void *addPlayer(void *arg) {
         }
     }
 
-    fflush(writer);
-    fflush(reader);
+    // ===> Add leave message
+    // char leave_msg[1024];
+    // snprintf(leave_msg, sizeof(leave_msg), "%s has left the room.\n", player->name);
+    // dll_append(player->room->messages, new_jval_s(strdup(leave_msg)));
+    // pthread_cond_signal(&player->room->condition);
+    // pthread_mutex_unlock(&player->room->lock);
+
     fclose(reader);
     fclose(writer);
     close(thread->fd);
@@ -183,10 +213,11 @@ void *addPlayer(void *arg) {
     free(player);
     free(buffer);
     pthread_mutex_destroy(&player->writers_block);
-    free(arg);
+    free(thread);
 
     return NULL;
 }
+
 
 void *initializeRoomThread(void *arg) {
     Room *room = (Room *)arg;
@@ -196,8 +227,9 @@ void *initializeRoomThread(void *arg) {
         while (dll_empty(room->messages)) {
             pthread_cond_wait(&room->condition, &room->lock);
         }
-
+        pthread_mutex_unlock(&room->lock);
         while (!dll_empty(room->messages)) {
+            pthread_mutex_lock(&room->lock);
             Dllist messageNode = dll_first(room->messages);
             char *message = (char *)jval_v(messageNode->val);
             dll_delete_node(messageNode);
@@ -205,20 +237,18 @@ void *initializeRoomThread(void *arg) {
             Dllist player;
             dll_traverse(player, room->players) {
                 Player *thisPlayer = (Player *)jval_v(player->val);
-                pthread_mutex_lock(&(thisPlayer->writers_block));
+                //pthread_mutex_lock(&(thisPlayer->writers_block));
                 if (thisPlayer->writer != NULL) {
                     if (fputs(message, thisPlayer->writer) == EOF ||
                         fflush(thisPlayer->writer) == EOF) {
                         perror("fputs or fflush failed");
                     }
                 }
-                pthread_mutex_unlock(&(thisPlayer->writers_block));
+                //pthread_mutex_unlock(&(thisPlayer->writers_block));
             }
-
             free(message);
+            pthread_mutex_unlock(&room->lock);
         }
-
-        pthread_mutex_unlock(&room->lock);
     }
     return NULL;
 }
